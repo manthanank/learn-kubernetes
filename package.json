@@ -1,0 +1,21 @@
+{
+  "name": "learn-kubernetes",
+  "version": "1.0.0",
+  "description": "An exhaustive, production-grade Kubernetes container orchestration & SRE masterclass.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/k8s.test.mjs"
+  },
+  "keywords": [
+    "kubernetes",
+    "k8s",
+    "devops",
+    "sre",
+    "cloud-native",
+    "helm",
+    "containers"
+  ],
+  "author": "Manthan Ank",
+  "license": "MIT"
+}
