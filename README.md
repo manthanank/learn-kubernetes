@@ -1018,3 +1018,211 @@ Contributions are welcome! Please review our [CONTRIBUTING.md](CONTRIBUTING.md) 
 
 ## 📄 License
 This project is open-source software licensed under the [MIT License](LICENSE).
+
+
+
+### Complete Kubernetes Enterprise Manifests & Production Code Examples
+
+#### 1. Production StatefulSet with Headless Service & Volume Claim Templates
+Provides stable network identities (`db-0`, `db-1`, `db-2`) and dedicated persistent storage per replica:
+
+```yaml
+# db-statefulset.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-headless
+  labels:
+    app: mongodb
+spec:
+  ports:
+  - port: 27017
+    name: mongodb
+  clusterIP: None # Headless service for direct DNS pod resolution
+  selector:
+    app: mongodb
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+spec:
+  serviceName: "mongodb-headless"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: mongodb
+        image: mongo:7.0
+        ports:
+        - containerPort: 27017
+          name: mongodb
+        volumeMounts:
+        - name: mongo-data
+          mountPath: /data/db
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+  # Dynamically provisions independent PV for each pod replica
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3" # AWS EBS gp3 or standard SSD
+      resources:
+        requests:
+          storage: 20Gi
+```
+
+---
+
+#### 2. Zero-Trust NetworkPolicy: Default Deny with Selective Whitelisting
+Blocks all unapproved lateral pod movement, preventing attackers from pivoting across namespaces:
+
+```yaml
+# network-policy-hardened.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-default-deny-isolate
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow incoming traffic ONLY from API gateway frontend pods on port 8080
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: gateway
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # 1. Allow DNS queries to CoreDNS pods in kube-system
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # 2. Allow outgoing traffic ONLY to database pods on port 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+```
+
+---
+
+#### 3. Horizontal Pod Autoscaler (HPA v2): Multi-Metric Scaling
+Scales workloads dynamically based on CPU, Memory, and application request throughput:
+
+```yaml
+# hpa-v2.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-service-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-service
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  # 1. Scale on CPU utilization (> 70% threshold)
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # 2. Scale on Memory utilization (> 80% threshold)
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Behavior throttling to avoid rapid scale flapping
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+```
+
+---
+
+#### 4. DaemonSet: Node-Level Observability with Taint Tolerations
+Runs exactly one instance of a logging agent across all nodes, including master control-plane nodes:
+
+```yaml
+# log-collector-daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-log-collector
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: node-log-collector
+  template:
+    metadata:
+      labels:
+        name: node-log-collector
+    spec:
+      # Tolerate control plane taints to collect master node logs
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: log-collector
+        image: fluent/fluent-bit:3.0
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+```
